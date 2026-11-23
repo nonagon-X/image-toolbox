@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Toolbox output folders (in case you test inside the repo)
+.toolbox-output
+web_resized/
+converted/
+compressed/
+renamed/
+watermarked/
+
+# Editors / OS
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
+.DS_Store
