@@ -4,6 +4,7 @@ import tkinter as tk
 from tkinter import colorchooser, ttk
 
 from _common import HINT, JobPanel, SkipFile, has_alpha, open_image, quality_slider, radio_row, save_image
+from _i18n import tr
 
 NAME = "Convert Format"
 DESCRIPTION = "Change images to JPEG, PNG, WebP or AVIF, keeping their size. The originals are left untouched."
@@ -27,20 +28,20 @@ class ConvertPanel(JobPanel):
                   0, "Convert to")
         quality_slider(st, self.var_quality, 1, hint="(not used for PNG)")
 
-        ttk.Label(st, text="Transparent areas").grid(row=2, column=0, sticky="w", **pad)
+        ttk.Label(st, text=tr("Transparent areas")).grid(row=2, column=0, sticky="w", **pad)
         f = ttk.Frame(st)
         f.grid(row=2, column=1, columnspan=5, sticky="w", **pad)
         self.swatch = tk.Label(f, width=3, bg=self.bg, relief="solid", bd=1)
         self.swatch.pack(side="left")
-        ttk.Button(f, text="Pick colour…", command=self._pick_bg).pack(side="left", padx=8)
-        ttk.Label(f, text="JPEG can't be transparent, so see-through areas get this colour",
+        ttk.Button(f, text=tr("Pick colour…"), command=self._pick_bg).pack(side="left", padx=8)
+        ttk.Label(f, text=tr("JPEG can't be transparent, so see-through areas get this colour"),
                   foreground=HINT).pack(side="left")
 
-        ttk.Checkbutton(st, text="Skip images that are already in the chosen format",
+        ttk.Checkbutton(st, text=tr("Skip images that are already in the chosen format"),
                         variable=self.var_skip_same).grid(row=3, column=0, columnspan=6, sticky="w", **pad)
 
     def _pick_bg(self):
-        c = colorchooser.askcolor(color=self.bg, title="Background colour for transparent areas")
+        c = colorchooser.askcolor(color=self.bg, title=tr("Background colour for transparent areas"))
         if c and c[1]:
             self.bg = c[1]
             self.swatch.configure(bg=self.bg)
@@ -54,9 +55,9 @@ class ConvertPanel(JobPanel):
         fmt = o["format"]
         same = {"jpeg": (".jpg", ".jpeg"), "png": (".png",), "webp": (".webp",), "avif": (".avif",)}[fmt]
         if o["skip_same"] and src.suffix.lower() in same:
-            raise SkipFile(f"already {fmt.upper()}")
+            raise SkipFile(tr("already {format}", format=fmt.upper()))
         im, icc = open_image(src)
-        note = " (transparency filled)" if fmt == "jpeg" and has_alpha(im) else ""
+        note = tr(" (transparency filled)") if fmt == "jpeg" and has_alpha(im) else ""
         dest = save_image(im, dest_dir / src.stem, fmt, o["quality"], icc=icc, bg=o["bg"])
         return dest, f"{src.suffix[1:].upper()} → {fmt.upper()}{note}"
 

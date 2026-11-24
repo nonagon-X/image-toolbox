@@ -3,13 +3,17 @@ Shared building blocks for Toolbox image modules (files starting with "_" are no
 shown in the sidebar).
 
 A module subclasses JobPanel and fills in:
-    TITLE-less attributes: OUT_NAME, RUN_LABEL, EXTS, SHOW_SIZES
+    attributes: OUT_NAME, RUN_LABEL, EXTS, SHOW_SIZES, SOURCE_TITLE, FILE_LABEL,
+                FOUND_TEXT, PROGRESS_TEXT   (texts in English; they are translated with tr())
     build_settings(frame)          - add the module's own options to the "2. Settings" box
     get_opts()                     - read the options (main thread); raise ValueError("msg") if invalid
     prepare(files, opts, base)     - optional: sort/plan before the run (worker thread); return files
     process(src, dest_dir, opts, i)- do one file (worker thread); return (dest_path, short_message)
                                      or raise SkipFile("reason")
-    on_sources_changed()           - optional: called when the user picks new images
+    on_sources_changed()           - optional: called when the user picks new files
+    count_units(src, opts)         - optional: progress steps per file (e.g. PDF pages)
+
+All visible text goes through tr() from _i18n so it can be translated (see _lang_pl.py).
 """
 
 import os
@@ -19,6 +23,8 @@ import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
+
+from _i18n import dec, num, tr
 
 SUPPORTED = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff", ".gif", ".avif"}
 FORMAT_EXT = {"jpeg": ".jpg", "png": ".png", "webp": ".webp", "avif": ".avif"}
@@ -156,32 +162,53 @@ def save_image(im, dest_stem, fmt, quality=82, icc=None, exif=None, bg=(255, 255
 
 
 def kb(n):
-    return f"{n / 1024:,.0f} KB"
+    return f"{num(round(n / 1024))} KB"
 
 
 # ---------------------------------------------------------------- small UI helpers
+# Labels passed to these helpers are English; the helpers translate them.
 
 def quality_slider(parent, var, row, label="Quality", hint="(80–85 is a good balance)", pad=None):
     pad = pad or {"padx": 10, "pady": 5}
-    ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", **pad)
+    ttk.Label(parent, text=tr(label)).grid(row=row, column=0, sticky="w", **pad)
     f = ttk.Frame(parent)
     f.grid(row=row, column=1, columnspan=5, sticky="w", **pad)
     ttk.Scale(f, from_=30, to=100, variable=var, length=220,
               command=lambda v: var.set(round(float(v)))).pack(side="left")
     ttk.Label(f, textvariable=var, width=4).pack(side="left", padx=8)
     if hint:
-        ttk.Label(f, text=hint, foreground=HINT).pack(side="left")
+        ttk.Label(f, text=tr(hint), foreground=HINT).pack(side="left")
     return f
 
 
 def radio_row(parent, var, choices, row, label, pad=None):
     pad = pad or {"padx": 10, "pady": 5}
-    ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", **pad)
+    ttk.Label(parent, text=tr(label)).grid(row=row, column=0, sticky="w", **pad)
     f = ttk.Frame(parent)
     f.grid(row=row, column=1, columnspan=5, sticky="w", **pad)
     for text, val in choices:
-        ttk.Radiobutton(f, text=text, value=val, variable=var).pack(side="left", padx=(0, 14))
+        ttk.Radiobutton(f, text=tr(text), value=val, variable=var).pack(side="left", padx=(0, 14))
     return f
+
+
+class Choice:
+    """A read-only drop-down that shows translated labels but returns the English key."""
+
+    def __init__(self, parent, keys, default, width=20, on_change=None):
+        self.keys = list(keys)
+        self.var = tk.StringVar(value=tr(default))
+        self.widget = ttk.Combobox(parent, textvariable=self.var, values=[tr(k) for k in self.keys],
+                                   state="readonly", width=width)
+        if on_change:
+            self.widget.bind("<<ComboboxSelected>>", lambda e: on_change())
+
+    def get(self):
+        labels = [tr(k) for k in self.keys]
+        value = self.var.get()
+        return self.keys[labels.index(value)] if value in labels else self.keys[0]
+
+    def set(self, key):
+        self.var.set(tr(key))
 
 
 # ---------------------------------------------------------------- base panel
@@ -192,9 +219,10 @@ class JobPanel(ttk.Frame):
     RUN_LABEL = "Run"
     EXTS = SUPPORTED             # which files are picked up
     SHOW_SIZES = True            # log size before → after
-    UNIT = "file"                # what the progress bar counts (e.g. "page")
     SOURCE_TITLE = "1. Choose images"
     FILE_LABEL = "Images"        # label in the "Choose files" dialog
+    FOUND_TEXT = "Found {files} file(s)."
+    PROGRESS_TEXT = "{done} of {total}"
 
     PAD = {"padx": 10, "pady": 5}
 
@@ -206,11 +234,11 @@ class JobPanel(ttk.Frame):
         self.running = False
         self.cancel = threading.Event()
 
-        self.var_source = tk.StringVar(value="No folder or files chosen")
+        self.var_source = tk.StringVar(value=tr("No folder or files chosen"))
         self.var_recursive = tk.BooleanVar(value=False)
         self.var_out = tk.StringVar()
         self.var_open = tk.BooleanVar(value=True)
-        self.var_status = tk.StringVar(value="Ready")
+        self.var_status = tk.StringVar(value=tr("Ready"))
         self._build()
 
     # ---- hooks for modules
@@ -237,36 +265,36 @@ class JobPanel(ttk.Frame):
     # ---- layout
     def _build(self):
         pad = self.PAD
-        src = ttk.LabelFrame(self, text=self.SOURCE_TITLE, style="Section.TLabelframe", padding=8)
+        src = ttk.LabelFrame(self, text=tr(self.SOURCE_TITLE), style="Section.TLabelframe", padding=8)
         src.pack(fill="x", pady=(0, 8))
-        ttk.Button(src, text="Choose folder…", command=self.pick_folder).grid(row=0, column=0, **pad)
-        ttk.Button(src, text="Choose files…", command=self.pick_files).grid(row=0, column=1, **pad)
-        ttk.Checkbutton(src, text="Include sub-folders", variable=self.var_recursive,
+        ttk.Button(src, text=tr("Choose folder…"), command=self.pick_folder).grid(row=0, column=0, **pad)
+        ttk.Button(src, text=tr("Choose files…"), command=self.pick_files).grid(row=0, column=1, **pad)
+        ttk.Checkbutton(src, text=tr("Include sub-folders"), variable=self.var_recursive,
                         command=self.on_sources_changed).grid(row=0, column=2, **pad)
         ttk.Label(src, textvariable=self.var_source, foreground="#52606d").grid(
             row=1, column=0, columnspan=4, sticky="w", padx=10)
 
-        st = ttk.LabelFrame(self, text="2. Settings", style="Section.TLabelframe", padding=8)
+        st = ttk.LabelFrame(self, text=tr("2. Settings"), style="Section.TLabelframe", padding=8)
         st.pack(fill="x", pady=(0, 8))
         self.build_settings(st)
 
-        out = ttk.LabelFrame(self, text="3. Save copies to", style="Section.TLabelframe", padding=8)
+        out = ttk.LabelFrame(self, text=tr("3. Save copies to"), style="Section.TLabelframe", padding=8)
         out.pack(fill="x", pady=(0, 8))
         out.columnconfigure(0, weight=1)
         ttk.Entry(out, textvariable=self.var_out).grid(row=0, column=0, sticky="ew", **pad)
-        ttk.Button(out, text="Browse…", command=self.pick_out).grid(row=0, column=1, **pad)
-        ttk.Checkbutton(out, text="Open the folder when finished", variable=self.var_open).grid(
+        ttk.Button(out, text=tr("Browse…"), command=self.pick_out).grid(row=0, column=1, **pad)
+        ttk.Checkbutton(out, text=tr("Open the folder when finished"), variable=self.var_open).grid(
             row=1, column=0, sticky="w", padx=10)
 
         run = ttk.Frame(self)
         run.pack(fill="x", pady=(2, 6))
-        self.btn_run = ttk.Button(run, text=self.RUN_LABEL, style="Accent.TButton", command=self.start)
+        self.btn_run = ttk.Button(run, text=tr(self.RUN_LABEL), style="Accent.TButton", command=self.start)
         self.btn_run.pack(side="left")
-        self.btn_stop = ttk.Button(run, text="Stop", command=self.stop, state="disabled")
+        self.btn_stop = ttk.Button(run, text=tr("Stop"), command=self.stop, state="disabled")
         self.btn_stop.pack(side="left", padx=(8, 0))
         self.progress = ttk.Progressbar(run, mode="determinate")
         self.progress.pack(side="left", fill="x", expand=True, padx=14)
-        ttk.Label(run, textvariable=self.var_status, width=28).pack(side="left")
+        ttk.Label(run, textvariable=self.var_status, width=30).pack(side="left")
 
         logf = ttk.Frame(self)
         logf.pack(fill="both", expand=True)
@@ -279,25 +307,26 @@ class JobPanel(ttk.Frame):
 
     # ---- pickers
     def pick_folder(self):
-        d = filedialog.askdirectory(title="Choose the folder with images")
+        d = filedialog.askdirectory(title=tr("Choose a folder"))
         if d:
             self.sources = [d]
-            self.var_source.set(f"Folder: {d}")
+            self.var_source.set(tr("Folder: {path}", path=d))
             self.var_out.set(str(Path(d) / self.OUT_NAME))
             self.on_sources_changed()
 
     def pick_files(self):
         pattern = " ".join(f"*{e}" for e in sorted(self.EXTS))
-        files = filedialog.askopenfilenames(title=f"Choose {self.FILE_LABEL.lower()}",
-                                            filetypes=[(self.FILE_LABEL, pattern), ("All files", "*.*")])
+        label = tr(self.FILE_LABEL)
+        files = filedialog.askopenfilenames(title=tr("Choose files"),
+                                            filetypes=[(label, pattern), (tr("All files"), "*.*")])
         if files:
             self.sources = list(files)
-            self.var_source.set(f"{len(files)} file(s) selected in {Path(files[0]).parent}")
+            self.var_source.set(tr("{n} file(s) selected in {path}", n=num(len(files)), path=Path(files[0]).parent))
             self.var_out.set(str(Path(files[0]).parent / self.OUT_NAME))
             self.on_sources_changed()
 
     def pick_out(self):
-        d = filedialog.askdirectory(title="Where should the copies go?")
+        d = filedialog.askdirectory(title=tr("Where should the copies go?"))
         if d:
             self.var_out.set(d)
 
@@ -317,27 +346,28 @@ class JobPanel(ttk.Frame):
         self.log.configure(state="disabled")
 
     def start(self):
+        title = tr(self.NAME)
         if self.running:
             return
         if not self.sources:
-            messagebox.showinfo(self.NAME, "Choose a folder or some images first.")
+            messagebox.showinfo(title, tr("Choose a folder or some files first."))
             return
         try:
             import PIL  # noqa: F401
         except ImportError:
-            messagebox.showerror(self.NAME, "The Pillow library is missing.\nRun install.bat or:  pip install pillow")
+            messagebox.showerror(title, tr("The Pillow library is missing.\nRun install.bat or:  pip install pillow"))
             return
         try:
             opts = self.get_opts()
         except ValueError as e:
-            messagebox.showerror(self.NAME, str(e))
+            messagebox.showerror(title, str(e))
             return
 
         base = base_of(self.sources)
         out_dir = Path(self.var_out.get().strip() or base / self.OUT_NAME)
         if out_dir.resolve() == base.resolve():
-            messagebox.showerror(self.NAME, "Please choose a different output folder than the one with your "
-                                            "images, so the originals are never overwritten.")
+            messagebox.showerror(title, tr("Please choose a different output folder than the one with your "
+                                           "files, so the originals are never overwritten."))
             return
 
         opts.update(sources=list(self.sources), recursive=self.var_recursive.get())
@@ -346,7 +376,7 @@ class JobPanel(ttk.Frame):
         self.btn_run.configure(state="disabled")
         self.btn_stop.configure(state="normal")
         self.progress.configure(value=0)
-        self.var_status.set("Working…")
+        self.var_status.set(tr("Working…"))
         self.log.configure(state="normal")
         self.log.delete("1.0", "end")
         self.log.configure(state="disabled")
@@ -406,7 +436,7 @@ class JobPanel(ttk.Frame):
                 emit("log", line)
                 ok += 1
             except SkipFile as e:
-                emit("log", f"– {src.name}: skipped ({e})")
+                emit("log", f"– {src.name}: " + tr("skipped ({reason})", reason=e))
                 skipped += 1
             except Exception as e:
                 emit("log", f"✗ {src.name}: {e}")
@@ -424,32 +454,34 @@ class JobPanel(ttk.Frame):
                 if kind == "total":
                     nfiles, nunits = payload
                     self.progress.configure(maximum=max(nunits, 1))
-                    msg = f"Found {nfiles} file(s)"
-                    if self.UNIT != "file":
-                        msg += f", {nunits:,} {self.UNIT}(s)"
-                    self._write(msg + ".")
+                    self._write(tr(self.FOUND_TEXT, files=num(nfiles), units=num(nunits)))
                 elif kind == "progress":
                     self.progress.configure(value=payload)
-                    self.var_status.set(f"{payload:,} of {int(self.progress['maximum']):,} {self.UNIT}s")
+                    self.var_status.set(tr(self.PROGRESS_TEXT, done=num(payload),
+                                           total=num(int(self.progress["maximum"]))))
                 elif kind == "log":
                     self._write(payload)
                 elif kind == "error":
                     self._finish()
-                    self.var_status.set("Stopped with an error")
-                    self._write(f"Error: {payload}")
-                    messagebox.showerror(self.NAME, payload)
+                    self.var_status.set(tr("Stopped with an error"))
+                    self._write(tr("Error: {message}", message=payload))
+                    messagebox.showerror(tr(self.NAME), payload)
                     return
                 elif kind == "done":
                     ok, failed, skipped, saved, out_dir, stopped = payload
                     self._finish()
-                    self.var_status.set("Stopped" if stopped else f"Done: {ok} ok, {failed} failed")
-                    summary = ("\nStopped by you. " if stopped else "\nDone. ") + f"{ok} done, {failed} failed"
+                    if stopped:
+                        self.var_status.set(tr("Stopped"))
+                        summary = tr("Stopped by you. Done: {ok}, failed: {failed}", ok=num(ok), failed=num(failed))
+                    else:
+                        self.var_status.set(tr("Finished: {ok} done, {failed} failed", ok=num(ok), failed=num(failed)))
+                        summary = tr("Finished. Done: {ok}, failed: {failed}", ok=num(ok), failed=num(failed))
                     if skipped:
-                        summary += f", {skipped} skipped"
+                        summary += tr(", skipped: {n}", n=num(skipped))
                     if self.SHOW_SIZES and ok:
-                        summary += f". Saved {saved / 1048576:.1f} MB"
-                    self._write(summary + ".")
-                    self._write(f"Copies are in: {out_dir.resolve()}")
+                        summary += tr(". Saved {mb} MB", mb=dec(saved / 1048576))
+                    self._write("\n" + summary + ".")
+                    self._write(tr("Copies are in: {path}", path=out_dir.resolve()))
                     if ok and self.var_open.get() and hasattr(os, "startfile"):
                         os.startfile(out_dir)
                     return
@@ -460,7 +492,7 @@ class JobPanel(ttk.Frame):
     def stop(self):
         if self.running:
             self.cancel.set()
-            self.var_status.set("Stopping…")
+            self.var_status.set(tr("Stopping…"))
             self.btn_stop.configure(state="disabled")
 
     def _finish(self):

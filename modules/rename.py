@@ -7,13 +7,18 @@ import unicodedata
 from datetime import datetime
 from tkinter import ttk
 
-from _common import HINT, SUPPORTED, JobPanel, rel_dir
+from _common import HINT, SUPPORTED, Choice, JobPanel, rel_dir
+from _i18n import num, tr
 
 NAME = "Rename in Bulk"
 DESCRIPTION = "Give many images clean, web-friendly names in one go. Renamed copies are made; originals stay as they are."
 ORDER = 4
 
-SORTS = ["File name", "Date taken (camera)", "Date modified"]
+SORT_NAME, SORT_TAKEN, SORT_MODIFIED = "File name", "Date taken (camera)", "Date modified"
+SORTS = [SORT_NAME, SORT_TAKEN, SORT_MODIFIED]
+
+# Polish letters that Unicode does not split into "letter + accent" (ł → l)
+EXTRA_ASCII = str.maketrans({"ł": "l", "Ł": "L", "ø": "o", "Ø": "O", "ß": "ss", "đ": "d", "Đ": "D"})
 
 
 def date_taken(path):
@@ -35,7 +40,7 @@ def clean(name, o):
     if o["hyphens"]:
         name = re.sub(r"[\s_]+", "-", name)
     if o["web_safe"]:
-        name = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
+        name = unicodedata.normalize("NFKD", name.translate(EXTRA_ASCII)).encode("ascii", "ignore").decode()
         name = re.sub(r"[^A-Za-z0-9\-_.]", "", name)
         name = re.sub(r"-{2,}", "-", name)
     if o["lower"]:
@@ -46,11 +51,11 @@ def clean(name, o):
 def plan_names(files, o, base):
     """Return the files in order and a {file: new name} plan, with clashes numbered -2, -3…"""
     dates = {}
-    if "{date}" in o["pattern"] or o["sort"] == SORTS[1]:
+    if "{date}" in o["pattern"] or o["sort"] == SORT_TAKEN:
         dates = {f: date_taken(f) for f in files}
-    if o["sort"] == SORTS[1]:
+    if o["sort"] == SORT_TAKEN:
         files = sorted(files, key=lambda f: (dates[f], str(f).lower()))
-    elif o["sort"] == SORTS[2]:
+    elif o["sort"] == SORT_MODIFIED:
         files = sorted(files, key=lambda f: (f.stat().st_mtime, str(f).lower()))
 
     plan, used = {}, set()
@@ -87,56 +92,57 @@ class RenamePanel(JobPanel):
         self.var_lower = tk.BooleanVar(value=True)
         self.var_hyphens = tk.BooleanVar(value=True)
         self.var_web = tk.BooleanVar(value=True)
-        self.var_sort = tk.StringVar(value=SORTS[0])
         self._after = None
 
-        ttk.Label(st, text="New name").grid(row=0, column=0, sticky="w", **pad)
+        ttk.Label(st, text=tr("New name")).grid(row=0, column=0, sticky="w", **pad)
         ttk.Entry(st, textvariable=self.var_pattern, width=34).grid(row=0, column=1, columnspan=3, sticky="w", **pad)
         quick = ttk.Frame(st)
         quick.grid(row=0, column=4, columnspan=2, sticky="w")
-        for label, tpl in [("Name", "{name}"), ("Text + number", "my-photo-{n}"), ("Date + number", "{date}-{n}")]:
-            ttk.Button(quick, text=label, command=lambda t=tpl: self.var_pattern.set(t)).pack(side="left", padx=2)
+        for label, tpl in [("Name", "{name}"), ("Text + number", tr("my-photo") + "-{n}"),
+                           ("Date + number", "{date}-{n}")]:
+            ttk.Button(quick, text=tr(label), command=lambda t=tpl: self.var_pattern.set(t)).pack(side="left", padx=2)
 
-        ttk.Label(st, text="{name} original name   {n} number   {date} date taken   {folder} folder name",
+        ttk.Label(st, text=tr("{name} original name   {n} number   {date} date taken   {folder} folder name"),
                   foreground=HINT).grid(row=1, column=1, columnspan=5, sticky="w", padx=10)
 
-        ttk.Label(st, text="Numbers").grid(row=2, column=0, sticky="w", **pad)
+        ttk.Label(st, text=tr("Numbers")).grid(row=2, column=0, sticky="w", **pad)
         nf = ttk.Frame(st)
         nf.grid(row=2, column=1, columnspan=5, sticky="w", **pad)
-        ttk.Label(nf, text="start at").pack(side="left")
+        ttk.Label(nf, text=tr("start at")).pack(side="left")
         ttk.Spinbox(nf, from_=0, to=99999, textvariable=self.var_start, width=6).pack(side="left", padx=(4, 14))
-        ttk.Label(nf, text="digits").pack(side="left")
+        ttk.Label(nf, text=tr("digits")).pack(side="left")
         ttk.Spinbox(nf, from_=1, to=6, textvariable=self.var_digits, width=3).pack(side="left", padx=(4, 14))
-        ttk.Label(nf, text="order by").pack(side="left")
-        ttk.Combobox(nf, textvariable=self.var_sort, values=SORTS, state="readonly", width=20).pack(side="left", padx=4)
+        ttk.Label(nf, text=tr("order by")).pack(side="left")
+        self.sort = Choice(nf, SORTS, SORT_NAME, width=22)
+        self.sort.widget.pack(side="left", padx=4)
 
         of = ttk.Frame(st)
         of.grid(row=3, column=0, columnspan=6, sticky="w", **pad)
-        ttk.Checkbutton(of, text="lowercase", variable=self.var_lower).pack(side="left", padx=(0, 14))
-        ttk.Checkbutton(of, text="spaces → hyphens", variable=self.var_hyphens).pack(side="left", padx=(0, 14))
-        ttk.Checkbutton(of, text="web-safe characters only (best for SEO and URLs)",
+        ttk.Checkbutton(of, text=tr("lowercase"), variable=self.var_lower).pack(side="left", padx=(0, 14))
+        ttk.Checkbutton(of, text=tr("spaces → hyphens"), variable=self.var_hyphens).pack(side="left", padx=(0, 14))
+        ttk.Checkbutton(of, text=tr("web-safe characters only (best for SEO and URLs)"),
                         variable=self.var_web).pack(side="left")
 
-        ttk.Label(st, text="Preview").grid(row=4, column=0, sticky="nw", **pad)
+        ttk.Label(st, text=tr("Preview")).grid(row=4, column=0, sticky="nw", **pad)
         self.preview = tk.Listbox(st, height=5, font=("Consolas", 9), relief="flat", bg="#f5f7fa",
                                   activestyle="none", width=90)
         self.preview.grid(row=4, column=1, columnspan=5, sticky="we", **pad)
-        self.preview.insert("end", "Choose a folder or files to see the new names here.")
+        self.preview.insert("end", tr("Choose a folder or files to see the new names here."))
 
         for v in (self.var_pattern, self.var_start, self.var_digits, self.var_lower,
-                  self.var_hyphens, self.var_web, self.var_sort):
+                  self.var_hyphens, self.var_web, self.sort.var):
             v.trace_add("write", lambda *a: self._schedule_preview())
 
     def get_opts(self):
         try:
             start, digits = int(self.var_start.get()), int(self.var_digits.get())
         except (tk.TclError, ValueError):
-            raise ValueError("Start number and digits must be whole numbers.")
+            raise ValueError(tr("Start number and digits must be whole numbers."))
         pattern = self.var_pattern.get().strip()
         if not pattern:
-            raise ValueError("Type a new name pattern, e.g. {name} or my-photo-{n}.")
+            raise ValueError(tr("Type a new name pattern, e.g. {name} or my-photo-{n}."))
         return {"pattern": pattern, "start": start, "digits": max(1, digits), "lower": self.var_lower.get(),
-                "hyphens": self.var_hyphens.get(), "web_safe": self.var_web.get(), "sort": self.var_sort.get()}
+                "hyphens": self.var_hyphens.get(), "web_safe": self.var_web.get(), "sort": self.sort.get()}
 
     def on_sources_changed(self):
         self._schedule_preview()
@@ -151,8 +157,8 @@ class RenamePanel(JobPanel):
         self.preview.delete(0, "end")
         files, base = self.current_files()
         if not files:
-            self.preview.insert("end", "No images found yet." if self.sources else
-                                "Choose a folder or files to see the new names here.")
+            self.preview.insert("end", tr("No images found yet.") if self.sources else
+                                tr("Choose a folder or files to see the new names here."))
             return
         try:
             o = self.get_opts()
@@ -163,7 +169,7 @@ class RenamePanel(JobPanel):
         for f in ordered[:30]:
             self.preview.insert("end", f"{f.name}  →  {plan[f]}")
         if len(ordered) > 30:
-            self.preview.insert("end", f"… and {len(ordered) - 30} more")
+            self.preview.insert("end", tr("… and {n} more", n=num(len(ordered) - 30)))
 
     def prepare(self, files, o, base):
         ordered, o["plan"] = plan_names(files, o, base)

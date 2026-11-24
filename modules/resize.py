@@ -3,7 +3,8 @@
 import tkinter as tk
 from tkinter import ttk
 
-from _common import HINT, JobPanel, open_image, quality_slider, radio_row, save_image, target_format
+from _common import HINT, Choice, JobPanel, open_image, quality_slider, radio_row, save_image, target_format
+from _i18n import tr
 
 NAME = "Resize Images"
 DESCRIPTION = "Make web-ready copies of your images at a smaller size. The originals are left untouched."
@@ -26,22 +27,20 @@ class ResizePanel(JobPanel):
 
     def build_settings(self, st):
         pad = self.PAD
-        self.var_preset = tk.StringVar(value="Full HD (1920 px)")
         self.var_w = tk.IntVar(value=1920)
         self.var_h = tk.IntVar(value=1920)
         self.var_format = tk.StringVar(value="keep")
         self.var_quality = tk.IntVar(value=82)
         self.var_suffix = tk.StringVar()
 
-        ttk.Label(st, text="Size").grid(row=0, column=0, sticky="w", **pad)
-        cb = ttk.Combobox(st, textvariable=self.var_preset, values=list(PRESETS), state="readonly", width=20)
-        cb.grid(row=0, column=1, sticky="w", **pad)
-        cb.bind("<<ComboboxSelected>>", self._on_preset)
-        ttk.Label(st, text="Max width").grid(row=0, column=2, sticky="e", **pad)
+        ttk.Label(st, text=tr("Size")).grid(row=0, column=0, sticky="w", **pad)
+        self.preset = Choice(st, PRESETS, "Full HD (1920 px)", width=22, on_change=self._on_preset)
+        self.preset.widget.grid(row=0, column=1, sticky="w", **pad)
+        ttk.Label(st, text=tr("Max width")).grid(row=0, column=2, sticky="e", **pad)
         self.sp_w = ttk.Spinbox(st, from_=50, to=10000, increment=50, textvariable=self.var_w, width=7,
                                 state="disabled")
         self.sp_w.grid(row=0, column=3, sticky="w")
-        ttk.Label(st, text="Max height").grid(row=0, column=4, sticky="e", **pad)
+        ttk.Label(st, text=tr("Max height")).grid(row=0, column=4, sticky="e", **pad)
         self.sp_h = ttk.Spinbox(st, from_=50, to=10000, increment=50, textvariable=self.var_h, width=7,
                                 state="disabled")
         self.sp_h.grid(row=0, column=5, sticky="w")
@@ -50,13 +49,13 @@ class ResizePanel(JobPanel):
                                         ("WebP (smallest)", "webp"), ("PNG", "png")], 1, "Format")
         quality_slider(st, self.var_quality, 2)
 
-        ttk.Label(st, text="Name suffix").grid(row=3, column=0, sticky="w", **pad)
+        ttk.Label(st, text=tr("Name suffix")).grid(row=3, column=0, sticky="w", **pad)
         ttk.Entry(st, textvariable=self.var_suffix, width=12).grid(row=3, column=1, sticky="w", **pad)
-        ttk.Label(st, text='optional, e.g. "_web" → photo_web.jpg', foreground=HINT).grid(
+        ttk.Label(st, text=tr('optional, e.g. "_web" → photo_web.jpg'), foreground=HINT).grid(
             row=3, column=2, columnspan=4, sticky="w")
 
-    def _on_preset(self, _=None):
-        size = PRESETS[self.var_preset.get()]
+    def _on_preset(self):
+        size = PRESETS[self.preset.get()]
         state = "normal" if size is None else "disabled"
         self.sp_w.configure(state=state)
         self.sp_h.configure(state=state)
@@ -70,7 +69,7 @@ class ResizePanel(JobPanel):
         except (tk.TclError, ValueError):
             w = h = 0
         if w <= 0 or h <= 0:
-            raise ValueError("Width and height must be whole numbers above 0.")
+            raise ValueError(tr("Width and height must be whole numbers above 0."))
         return {"width": w, "height": h, "quality": int(self.var_quality.get()),
                 "format": self.var_format.get(), "suffix": self.var_suffix.get().strip()}
 

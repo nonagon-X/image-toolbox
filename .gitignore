@@ -20,3 +20,8 @@ watermarked/
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# Build output (Toolbox.exe goes to GitHub Releases, not into the repo)
+build/
+dist/
+*.spec
