@@ -12,13 +12,17 @@ APP_DIR = Path(__file__).resolve().parent
 MAIN = APP_DIR / "toolbox.pyw"
 
 
-def ensure_pillow():
-    try:
-        import PIL  # noqa: F401
-        print("Pillow: already installed")
-    except ImportError:
-        print("Installing Pillow…")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "--user", "pillow"])
+PACKAGES = [("PIL", "pillow"), ("pypdfium2", "pypdfium2")]  # (import name, pip name)
+
+
+def ensure_packages():
+    for module, package in PACKAGES:
+        try:
+            __import__(module)
+            print(f"{package}: already installed")
+        except ImportError:
+            print(f"Installing {package}…")
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "--user", package])
 
 
 def pythonw_path():
@@ -42,7 +46,7 @@ def main():
     if sys.platform != "win32":
         print("Shortcuts are only created on Windows. Start the app with:  python toolbox.pyw")
         return
-    ensure_pillow()
+    ensure_packages()
     target = pythonw_path()
     args = f'"{MAIN}"'
     desktop = Path(os.path.expandvars(r"%USERPROFILE%\Desktop"))

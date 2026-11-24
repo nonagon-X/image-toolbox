@@ -121,7 +121,7 @@ def flatten(im, bg=(255, 255, 255)):
         out = Image.new("RGB", im.size, bg)
         out.paste(im, mask=im.getchannel("A"))
         return out
-    return im if im.mode == "RGB" else im.convert("RGB")
+    return im if im.mode in ("RGB", "L") else im.convert("RGB")
 
 
 def save_image(im, dest_stem, fmt, quality=82, icc=None, exif=None, bg=(255, 255, 255),
@@ -192,6 +192,9 @@ class JobPanel(ttk.Frame):
     RUN_LABEL = "Run"
     EXTS = SUPPORTED             # which files are picked up
     SHOW_SIZES = True            # log size before → after
+    UNIT = "file"                # what the progress bar counts (e.g. "page")
+    SOURCE_TITLE = "1. Choose images"
+    FILE_LABEL = "Images"        # label in the "Choose files" dialog
 
     PAD = {"padx": 10, "pady": 5}
 
@@ -201,6 +204,7 @@ class JobPanel(ttk.Frame):
         self.sources = []
         self.q = queue.Queue()
         self.running = False
+        self.cancel = threading.Event()
 
         self.var_source = tk.StringVar(value="No folder or files chosen")
         self.var_recursive = tk.BooleanVar(value=False)
@@ -225,10 +229,15 @@ class JobPanel(ttk.Frame):
     def on_sources_changed(self):
         pass
 
+    def count_units(self, src, opts):
+        """How many progress steps src takes (e.g. pages in a PDF). In process(), call
+        opts["_tick"]() after each step and check opts["_cancelled"]() in long loops."""
+        return 1
+
     # ---- layout
     def _build(self):
         pad = self.PAD
-        src = ttk.LabelFrame(self, text="1. Choose images", style="Section.TLabelframe", padding=8)
+        src = ttk.LabelFrame(self, text=self.SOURCE_TITLE, style="Section.TLabelframe", padding=8)
         src.pack(fill="x", pady=(0, 8))
         ttk.Button(src, text="Choose folder…", command=self.pick_folder).grid(row=0, column=0, **pad)
         ttk.Button(src, text="Choose files…", command=self.pick_files).grid(row=0, column=1, **pad)
@@ -253,6 +262,8 @@ class JobPanel(ttk.Frame):
         run.pack(fill="x", pady=(2, 6))
         self.btn_run = ttk.Button(run, text=self.RUN_LABEL, style="Accent.TButton", command=self.start)
         self.btn_run.pack(side="left")
+        self.btn_stop = ttk.Button(run, text="Stop", command=self.stop, state="disabled")
+        self.btn_stop.pack(side="left", padx=(8, 0))
         self.progress = ttk.Progressbar(run, mode="determinate")
         self.progress.pack(side="left", fill="x", expand=True, padx=14)
         ttk.Label(run, textvariable=self.var_status, width=28).pack(side="left")
@@ -277,8 +288,8 @@ class JobPanel(ttk.Frame):
 
     def pick_files(self):
         pattern = " ".join(f"*{e}" for e in sorted(self.EXTS))
-        files = filedialog.askopenfilenames(title="Choose images",
-                                            filetypes=[("Images", pattern), ("All files", "*.*")])
+        files = filedialog.askopenfilenames(title=f"Choose {self.FILE_LABEL.lower()}",
+                                            filetypes=[(self.FILE_LABEL, pattern), ("All files", "*.*")])
         if files:
             self.sources = list(files)
             self.var_source.set(f"{len(files)} file(s) selected in {Path(files[0]).parent}")
@@ -331,7 +342,9 @@ class JobPanel(ttk.Frame):
 
         opts.update(sources=list(self.sources), recursive=self.var_recursive.get())
         self.running = True
+        self.cancel.clear()
         self.btn_run.configure(state="disabled")
+        self.btn_stop.configure(state="normal")
         self.progress.configure(value=0)
         self.var_status.set("Working…")
         self.log.configure(state="normal")
@@ -353,10 +366,30 @@ class JobPanel(ttk.Frame):
         mark_output_folder(out_dir)
         files = collect_images(opts["sources"], opts["recursive"], out_dir, self.EXTS)
         files = self.prepare(files, opts, base)
-        emit("total", len(files))
+
+        units = []
+        for f in files:
+            try:
+                units.append(max(1, int(self.count_units(f, opts))))
+            except Exception:
+                units.append(1)
+        emit("total", (len(files), sum(units)))
+
+        done = 0
+
+        def tick(n=1):
+            nonlocal done
+            done += n
+            emit("progress", done)
+
+        opts["_tick"] = tick
+        opts["_cancelled"] = self.cancel.is_set
 
         ok = failed = skipped = saved = 0
+        finished_units = 0
         for i, src in enumerate(files, 1):
+            if self.cancel.is_set():
+                break
             try:
                 dest_dir = out_dir / rel_dir(base, src)
                 dest_dir.mkdir(parents=True, exist_ok=True)
@@ -378,19 +411,26 @@ class JobPanel(ttk.Frame):
             except Exception as e:
                 emit("log", f"✗ {src.name}: {e}")
                 failed += 1
-            emit("progress", i)
-        emit("done", (ok, failed, skipped, saved, out_dir))
+            finished_units += units[i - 1]
+            if not self.cancel.is_set() and done != finished_units:
+                done = finished_units  # modules that don't tick still move the bar
+                emit("progress", done)
+        emit("done", (ok, failed, skipped, saved, out_dir, self.cancel.is_set()))
 
     def _poll(self):
         try:
             while True:
                 kind, payload = self.q.get_nowait()
                 if kind == "total":
-                    self.progress.configure(maximum=max(payload, 1))
-                    self._write(f"Found {payload} file(s).")
+                    nfiles, nunits = payload
+                    self.progress.configure(maximum=max(nunits, 1))
+                    msg = f"Found {nfiles} file(s)"
+                    if self.UNIT != "file":
+                        msg += f", {nunits:,} {self.UNIT}(s)"
+                    self._write(msg + ".")
                 elif kind == "progress":
                     self.progress.configure(value=payload)
-                    self.var_status.set(f"{payload} of {int(self.progress['maximum'])}")
+                    self.var_status.set(f"{payload:,} of {int(self.progress['maximum']):,} {self.UNIT}s")
                 elif kind == "log":
                     self._write(payload)
                 elif kind == "error":
@@ -400,10 +440,10 @@ class JobPanel(ttk.Frame):
                     messagebox.showerror(self.NAME, payload)
                     return
                 elif kind == "done":
-                    ok, failed, skipped, saved, out_dir = payload
+                    ok, failed, skipped, saved, out_dir, stopped = payload
                     self._finish()
-                    self.var_status.set(f"Done: {ok} ok, {failed} failed")
-                    summary = f"\nDone. {ok} done, {failed} failed"
+                    self.var_status.set("Stopped" if stopped else f"Done: {ok} ok, {failed} failed")
+                    summary = ("\nStopped by you. " if stopped else "\nDone. ") + f"{ok} done, {failed} failed"
                     if skipped:
                         summary += f", {skipped} skipped"
                     if self.SHOW_SIZES and ok:
@@ -417,9 +457,16 @@ class JobPanel(ttk.Frame):
             pass
         self.after(50, self._poll)
 
+    def stop(self):
+        if self.running:
+            self.cancel.set()
+            self.var_status.set("Stopping…")
+            self.btn_stop.configure(state="disabled")
+
     def _finish(self):
         self.running = False
         self.btn_run.configure(state="normal")
+        self.btn_stop.configure(state="disabled")
 
 
 def copy_file(src, dest):

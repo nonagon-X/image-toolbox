@@ -11,6 +11,7 @@ A simple Windows desktop app for preparing images for websites. Pick a module fr
 | **Compress Only** | Makes files smaller while keeping the same size and format. Optionally reduces PNGs to 256 colours. Keeps the original if compressing doesn't make it smaller. |
 | **Rename in Bulk** | Gives files clean, SEO-friendly names using a pattern like `{name}`, `my-photo-{n}` or `{date}-{n}`, with a live preview. |
 | **Add Watermark** | Adds a text or logo watermark. You can set the position (corners, centre or tiled), size, opacity and colour, and preview it on the first image. |
+| **PDF to Images** | Saves PDF pages as JPEG, PNG or WebP. Set the size by width in pixels or by DPI, pick pages (`all`, `1-5, 8, 10-`), and optionally use greyscale. Works through big PDFs one page at a time, with page-by-page progress and a Stop button. |
 
 Every module also:
 - works on a whole folder or on files you pick, with an option to include sub-folders (the folder layout is kept in the output)
@@ -23,7 +24,7 @@ Every module also:
 
 - Windows 10 or 11
 - [Python 3.10+](https://www.python.org/downloads/) (with tkinter, which is included by default)
-- [Pillow](https://pypi.org/project/pillow/), which the installer adds for you
+- [Pillow](https://pypi.org/project/pillow/) and [pypdfium2](https://pypi.org/project/pypdfium2/) (the PDF engine used in Chrome), which the installer adds for you
 - Optional: `pip install pillow-heif` to open iPhone `.heic` photos
 
 ## Install
@@ -31,7 +32,7 @@ Every module also:
 1. Download or clone this repository.
 2. Double-click **`install.bat`**.
 
-This installs Pillow if it's missing and adds a **Toolbox** shortcut to your Desktop and Start Menu.
+This installs the required libraries if they're missing and adds a **Toolbox** shortcut to your Desktop and Start Menu.
 
 You can also start the app without installing: double-click `Start Toolbox.bat`, or run `pythonw toolbox.pyw`.
 
@@ -48,13 +49,13 @@ def build(parent):    # create the module's interface inside parent (a ttk.Frame
     ...
 ```
 
-For image tasks, subclass `JobPanel` from `modules/_common.py`. It already provides the image picker, output folder, Run button, progress bar, log and background thread, so you only write `build_settings()`, `get_opts()` and `process()`. See `modules/compress.py` for a short example.
+For image tasks, subclass `JobPanel` from `modules/_common.py`. It already provides the image picker, output folder, Run button, progress bar, log and background thread, so you only write `build_settings()`, `get_opts()` and `process()`. For long jobs, add `count_units()` and call `opts["_tick"]()` after each step, as `pdf_to_images.py` does, so you get detailed progress and the Stop button works partway through a file. See `modules/compress.py` for a short example.
 
 ## Project layout
 
 ```
 toolbox.pyw          main window, finds and loads modules
-install.py / .bat    installs Pillow, creates shortcuts
+install.py / .bat    installs the libraries, creates shortcuts
 Start Toolbox.bat    starts the app without a console window
 modules/
   _common.py         shared image helpers and the JobPanel base class
@@ -63,6 +64,7 @@ modules/
   compress.py        Compress Only
   rename.py          Rename in Bulk
   watermark.py       Add Watermark
+  pdf_to_images.py   PDF to Images
 ```
 
 ## License
