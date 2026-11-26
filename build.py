@@ -5,9 +5,13 @@ People can run it on any Windows 10/11 PC without installing Python.
     python build.py        (or double-click build.bat)
 
 Needs:  pip install pyinstaller pillow pypdfium2
+Installer (optional):  winget install JRSoftware.InnoSetup  -> also builds dist/ToolboxSetup.exe
 """
 
 import ast
+import os
+import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -53,6 +57,34 @@ def main():
     subprocess.check_call(cmd, cwd=ROOT)
     exe = ROOT / "dist" / "Toolbox.exe"
     print(f"\nDone: {exe}  ({exe.stat().st_size / 1048576:.0f} MB)")
+    build_installer()
+
+
+def app_version():
+    m = re.search(r'^VERSION = "([^"]+)"', (ROOT / "toolbox.pyw").read_text(encoding="utf-8"), re.M)
+    return m.group(1)
+
+
+def find_iscc():
+    for p in (shutil.which("ISCC"),
+              Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Inno Setup 6" / "ISCC.exe",
+              Path(os.environ.get("ProgramFiles(x86)", "")) / "Inno Setup 6" / "ISCC.exe",
+              Path(os.environ.get("ProgramFiles", "")) / "Inno Setup 6" / "ISCC.exe"):
+        if p and Path(p).is_file():
+            return str(p)
+    return None
+
+
+def build_installer():
+    """dist/ToolboxSetup.exe: installs Toolbox like other Windows programs (uninstall, updates)."""
+    iscc = find_iscc()
+    if not iscc:
+        print("Inno Setup not found, so no installer was built.  winget install JRSoftware.InnoSetup")
+        return
+    print("Building ToolboxSetup.exe…")
+    subprocess.check_call([iscc, "/Q", f"/DAppVersion={app_version()}", str(ROOT / "installer" / "Toolbox.iss")])
+    setup = ROOT / "dist" / "ToolboxSetup.exe"
+    print(f"Done: {setup}  ({setup.stat().st_size / 1048576:.0f} MB)")
 
 
 if __name__ == "__main__":

@@ -211,4 +211,64 @@ TEXTS = {
     "no pages saved": "nie zapisano żadnej strony",
     "pages saved: {n}, {w}×{h} px": "zapisane strony: {n}, {w}×{h} px",
     "(stopped)": "(zatrzymano)",
+
+    # ---- updates
+    "Check for updates": "Sprawdź aktualizacje",
+    "Checking for updates…": "Sprawdzam aktualizacje…",
+    "Couldn't check for updates:\n{error}": "Nie udało się sprawdzić aktualizacji:\n{error}",
+    "You have the latest version ({version}).": "Masz najnowszą wersję ({version}).",
+    "Toolbox {new} is available (you have {old}).\n\nOpen the download page?":
+        "Dostępny jest Toolbox {new} (masz {old}).\n\nOtworzyć stronę pobierania?",
+    "Toolbox {new} is available. Please wait until the current job finishes, then check again.":
+        "Dostępny jest Toolbox {new}. Poczekaj, aż bieżące zadanie się zakończy, i sprawdź ponownie.",
+    "Toolbox {new} is available (you have {old}).\n\nDownload and install it now? "
+    "Toolbox will close and the installer will update it.":
+        "Dostępny jest Toolbox {new} (masz {old}).\n\nPobrać i zainstalować teraz? "
+        "Toolbox zostanie zamknięty, a instalator go zaktualizuje.",
+    "Downloading… {pct}%": "Pobieranie… {pct}%",
+    "The download failed:\n{error}": "Pobieranie nie powiodło się:\n{error}",
+
+    # ---- shared "3. Save results" (modules that can overwrite originals)
+    "3. Save results": "3. Zapisz wyniki",
+    "Save copies next to the originals": "Zapisz kopie obok oryginałów",
+    "Save copies in this folder:": "Zapisz kopie w tym folderze:",
+    "Overwrite the original files (cannot be undone)": "Nadpisz oryginalne pliki (nie można cofnąć)",
+    "Copy name:  prefix": "Nazwa kopii:  przedrostek",
+    "suffix": "przyrostek",
+    "(the original file is replaced)": "(oryginalny plik zostanie zastąpiony)",
+    "e.g. {name}": "np. {name}",
+    'A prefix or suffix can\'t contain any of these: \\ / : * ? " < > |':
+        'Przedrostek ani przyrostek nie może zawierać znaków: \\ / : * ? " < > |',
+    "Enter a prefix or a suffix, so the copies don't replace the originals. "
+    "To replace them, choose \"Overwrite the original files\".":
+        "Wpisz przedrostek lub przyrostek, żeby kopie nie zastąpiły oryginałów. "
+        "Aby je zastąpić, wybierz „Nadpisz oryginalne pliki”.",
+    "The original files will be replaced by the new versions. This cannot be undone.\n\nContinue?":
+        "Oryginalne pliki zostaną zastąpione nowymi wersjami. Tego nie można cofnąć.\n\nKontynuować?",
+    "Copies are next to the originals in: {path}": "Kopie są obok oryginałów w: {path}",
+    "Originals were replaced in: {path}": "Zastąpiono oryginały w: {path}",
+
+    # ---- Compress PDF
+    "Compress PDF": "Kompresuj PDF",
+    "Make scanned PDFs much smaller by lowering the resolution and image quality of each page. "
+    "Choose whether to save copies or replace the originals.":
+        "Zmniejsz rozmiar zeskanowanych plików PDF, obniżając rozdzielczość i jakość obrazu każdej strony. "
+        "Wybierz, czy zapisać kopie, czy zastąpić oryginały.",
+    "Found {files} PDF file(s), {units} page(s) to process.":
+        "Znalezione pliki PDF: {files}, stron do przetworzenia: {units}.",
+    "DPI   (150 = easy to read and print, 100 = smallest; scanners often use 300–600)":
+        "DPI   (150 = czytelne i do druku, 100 = najmniejsze; skanery często używają 300–600)",
+    "Colours": "Kolory",
+    "Colour": "Kolorowy",
+    "Greyscale (much smaller for text documents)": "Odcienie szarości (dużo mniejsze dla dokumentów tekstowych)",
+    "(60–75 is usually fine for scans)": "(60–75 zwykle wystarcza dla skanów)",
+    "If the result isn't smaller, keep the original file": "Jeśli wynik nie jest mniejszy, zachowaj oryginalny plik",
+    "Skip PDFs with selectable text (they are not plain scans; compressing would turn their text into pictures)":
+        "Pomiń pliki PDF z zaznaczalnym tekstem (to nie są zwykłe skany; kompresja zamieniłaby tekst w obrazy)",
+    "DPI must be a number.": "DPI musi być liczbą.",
+    "DPI must be between 50 and 600.": "DPI musi wynosić od 50 do 600.",
+    "it has selectable text, so it is not a plain scan": "zawiera zaznaczalny tekst, więc nie jest zwykłym skanem",
+    "stopped": "zatrzymano",
+    "already small — original kept": "już jest mały — zachowano oryginał",
+    "already small — original copied": "już jest mały — skopiowano oryginał",
 }

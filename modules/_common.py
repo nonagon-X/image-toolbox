@@ -13,6 +13,11 @@ A module subclasses JobPanel and fills in:
     on_sources_changed()           - optional: called when the user picks new files
     count_units(src, opts)         - optional: progress steps per file (e.g. PDF pages)
 
+Set OUTPUT_CHOICE = True to let the user overwrite the originals or save copies next to
+them, with a prefix/suffix (DEFAULT_SUFFIX). In process(), get the file to write with
+dest_path(src, dest_dir, opts), write to temp_path(dest) and finish with
+replace_file(tmp, dest), so a failed run never leaves a half-written original.
+
 All visible text goes through tr() from _i18n so it can be translated (see _lang_pl.py).
 """
 
@@ -62,12 +67,14 @@ def mark_output_folder(folder):
                 pass
 
 
-def collect_images(sources, recursive, out_dir, exts=SUPPORTED):
+def collect_images(sources, recursive, out_dir, exts=SUPPORTED, skip_name=None):
+    """out_dir may be None (results are written next to the sources). skip_name(path) -> True
+    leaves a file out (e.g. copies made by an earlier run)."""
     files = []
-    out_res = out_dir.resolve()
+    out_res = out_dir.resolve() if out_dir else None
 
     def skip_dir(d):
-        return d.resolve() == out_res or (d / MARKER).exists()
+        return (out_res is not None and d.resolve() == out_res) or (d / MARKER).exists()
 
     for item in sources:
         p = Path(item)
@@ -81,7 +88,43 @@ def collect_images(sources, recursive, out_dir, exts=SUPPORTED):
                     continue
                 dirs[:] = [x for x in dirs if not skip_dir(root / x)] if recursive else []
                 files += [root / n for n in names if Path(n).suffix.lower() in exts]
+    if skip_name:
+        files = [f for f in files if not skip_name(f)]
     return sorted(set(files), key=lambda f: str(f).lower())
+
+
+def dest_path(src, dest_dir, opts, ext=None):
+    """Where the result for src goes: src itself when overwriting, otherwise
+    dest_dir / prefix + name + suffix + ext."""
+    if opts.get("out_mode") == "overwrite":
+        return Path(src)
+    ext = ext or Path(src).suffix
+    return Path(dest_dir) / f"{opts.get('prefix', '')}{Path(src).stem}{opts.get('suffix', '')}{ext}"
+
+
+TEMP_PREFIX = "~toolbox-"
+
+
+def temp_path(dest):
+    """A temporary file next to dest; write there, then replace_file(tmp, dest)."""
+    dest = Path(dest)
+    return dest.with_name(f"{TEMP_PREFIX}{os.getpid()}-{dest.name}")
+
+
+def replace_file(tmp, dest):
+    """Move a finished temporary file over dest in one step (dest may be the original)."""
+    os.replace(tmp, dest)
+    return Path(dest)
+
+
+def is_copy_name(path, prefix, suffix):
+    """True when path looks like a copy made by an earlier run (so re-runs don't shrink copies again)."""
+    stem = Path(path).stem
+    if stem.startswith(TEMP_PREFIX):
+        return True
+    if not (prefix or suffix):
+        return False
+    return stem.startswith(prefix) and stem.endswith(suffix) and len(stem) > len(prefix) + len(suffix)
 
 
 def base_of(sources):
@@ -223,6 +266,8 @@ class JobPanel(ttk.Frame):
     FILE_LABEL = "Images"        # label in the "Choose files" dialog
     FOUND_TEXT = "Found {files} file(s)."
     PROGRESS_TEXT = "{done} of {total}"
+    OUTPUT_CHOICE = False        # True: offer "overwrite" / "copies next to originals" + prefix/suffix
+    DEFAULT_SUFFIX = ""
 
     PAD = {"padx": 10, "pady": 5}
 
@@ -239,6 +284,10 @@ class JobPanel(ttk.Frame):
         self.var_out = tk.StringVar()
         self.var_open = tk.BooleanVar(value=True)
         self.var_status = tk.StringVar(value=tr("Ready"))
+        self.var_outmode = tk.StringVar(value="next" if self.OUTPUT_CHOICE else "folder")
+        self.var_prefix = tk.StringVar(value="")
+        self.var_suffix = tk.StringVar(value=self.DEFAULT_SUFFIX)
+        self.confirm_overwrite = True  # the self-test turns this off
         self._build()
 
     # ---- hooks for modules
@@ -278,13 +327,16 @@ class JobPanel(ttk.Frame):
         st.pack(fill="x", pady=(0, 8))
         self.build_settings(st)
 
-        out = ttk.LabelFrame(self, text=tr("3. Save copies to"), style="Section.TLabelframe", padding=8)
-        out.pack(fill="x", pady=(0, 8))
-        out.columnconfigure(0, weight=1)
-        ttk.Entry(out, textvariable=self.var_out).grid(row=0, column=0, sticky="ew", **pad)
-        ttk.Button(out, text=tr("Browse…"), command=self.pick_out).grid(row=0, column=1, **pad)
-        ttk.Checkbutton(out, text=tr("Open the folder when finished"), variable=self.var_open).grid(
-            row=1, column=0, sticky="w", padx=10)
+        if self.OUTPUT_CHOICE:
+            self._build_output_choice(pad)
+        else:
+            out = ttk.LabelFrame(self, text=tr("3. Save copies to"), style="Section.TLabelframe", padding=8)
+            out.pack(fill="x", pady=(0, 8))
+            out.columnconfigure(0, weight=1)
+            ttk.Entry(out, textvariable=self.var_out).grid(row=0, column=0, sticky="ew", **pad)
+            ttk.Button(out, text=tr("Browse…"), command=self.pick_out).grid(row=0, column=1, **pad)
+            ttk.Checkbutton(out, text=tr("Open the folder when finished"), variable=self.var_open).grid(
+                row=1, column=0, sticky="w", padx=10)
 
         run = ttk.Frame(self)
         run.pack(fill="x", pady=(2, 6))
@@ -304,6 +356,66 @@ class JobPanel(ttk.Frame):
         self.log.configure(yscrollcommand=sb.set)
         self.log.pack(side="left", fill="both", expand=True)
         sb.pack(side="right", fill="y")
+
+    def _build_output_choice(self, pad):
+        out = ttk.LabelFrame(self, text=tr("3. Save results"), style="Section.TLabelframe", padding=8)
+        out.pack(fill="x", pady=(0, 8))
+        out.columnconfigure(1, weight=1)
+        ttk.Radiobutton(out, text=tr("Save copies next to the originals"), value="next",
+                        variable=self.var_outmode).grid(row=0, column=0, columnspan=3, sticky="w", **pad)
+        ttk.Radiobutton(out, text=tr("Save copies in this folder:"), value="folder",
+                        variable=self.var_outmode).grid(row=1, column=0, sticky="w", **pad)
+        self.out_entry = ttk.Entry(out, textvariable=self.var_out)
+        self.out_entry.grid(row=1, column=1, sticky="ew", **pad)
+        self.out_browse = ttk.Button(out, text=tr("Browse…"), command=self.pick_out)
+        self.out_browse.grid(row=1, column=2, **pad)
+        ttk.Radiobutton(out, text=tr("Overwrite the original files (cannot be undone)"), value="overwrite",
+                        variable=self.var_outmode).grid(row=2, column=0, columnspan=3, sticky="w", **pad)
+
+        nf = ttk.Frame(out)
+        nf.grid(row=3, column=0, columnspan=3, sticky="w", **pad)
+        ttk.Label(nf, text=tr("Copy name:  prefix")).pack(side="left")
+        self.prefix_entry = ttk.Entry(nf, textvariable=self.var_prefix, width=12)
+        self.prefix_entry.pack(side="left", padx=(4, 12))
+        ttk.Label(nf, text=tr("suffix")).pack(side="left")
+        self.suffix_entry = ttk.Entry(nf, textvariable=self.var_suffix, width=12)
+        self.suffix_entry.pack(side="left", padx=(4, 12))
+        self.var_example = tk.StringVar()
+        ttk.Label(nf, textvariable=self.var_example, foreground=HINT).pack(side="left")
+
+        ttk.Checkbutton(out, text=tr("Open the folder when finished"), variable=self.var_open).grid(
+            row=4, column=0, columnspan=3, sticky="w", padx=10)
+        for v in (self.var_outmode, self.var_prefix, self.var_suffix):
+            v.trace_add("write", lambda *a: self._update_output_choice())
+        self._update_output_choice()
+
+    def _update_output_choice(self):
+        mode = self.var_outmode.get()
+        folder = "normal" if mode == "folder" else "disabled"
+        name = "disabled" if mode == "overwrite" else "normal"
+        self.out_entry.configure(state=folder)
+        self.out_browse.configure(state=folder)
+        self.prefix_entry.configure(state=name)
+        self.suffix_entry.configure(state=name)
+        if mode == "overwrite":
+            self.var_example.set(tr("(the original file is replaced)"))
+        else:
+            ext = sorted(self.EXTS)[0]
+            example = f"{self.var_prefix.get().strip()}scan{self.var_suffix.get().strip()}{ext}"
+            self.var_example.set(tr("e.g. {name}", name=example))
+
+    def _output_opts(self):
+        """Read the "3. Save results" choice (main thread). Raises ValueError when it can't work."""
+        mode = self.var_outmode.get()
+        prefix, suffix = self.var_prefix.get().strip(), self.var_suffix.get().strip()
+        if set('\\/:*?"<>|') & set(prefix + suffix):
+            raise ValueError(tr('A prefix or suffix can\'t contain any of these: \\ / : * ? " < > |'))
+        if mode == "overwrite":
+            prefix = suffix = ""
+        elif mode == "next" and not (prefix or suffix):
+            raise ValueError(tr("Enter a prefix or a suffix, so the copies don't replace the originals. "
+                                "To replace them, choose \"Overwrite the original files\"."))
+        return {"out_mode": mode, "prefix": prefix, "suffix": suffix}
 
     # ---- pickers
     def pick_folder(self):
@@ -336,7 +448,15 @@ class JobPanel(ttk.Frame):
             return [], None
         base = base_of(self.sources)
         out_dir = Path(self.var_out.get().strip() or base / self.OUT_NAME)
-        return collect_images(self.sources, self.var_recursive.get(), out_dir, self.EXTS), base
+        if self.var_outmode.get() != "folder":
+            out_dir = None
+        skip = self._copy_filter(self.var_prefix.get().strip(), self.var_suffix.get().strip())
+        return collect_images(self.sources, self.var_recursive.get(), out_dir, self.EXTS, skip), base
+
+    def _copy_filter(self, prefix, suffix):
+        if not self.OUTPUT_CHOICE:
+            return None
+        return lambda f: is_copy_name(f, prefix, suffix)
 
     # ---- run
     def _write(self, text):
@@ -359,16 +479,23 @@ class JobPanel(ttk.Frame):
             return
         try:
             opts = self.get_opts()
+            opts.update(self._output_opts() if self.OUTPUT_CHOICE else {"out_mode": "folder"})
         except ValueError as e:
             messagebox.showerror(title, str(e))
             return
 
         base = base_of(self.sources)
         out_dir = Path(self.var_out.get().strip() or base / self.OUT_NAME)
-        if out_dir.resolve() == base.resolve():
+        if opts["out_mode"] != "folder":
+            out_dir = None
+        elif out_dir.resolve() == base.resolve() and not (opts.get("prefix") or opts.get("suffix")):
             messagebox.showerror(title, tr("Please choose a different output folder than the one with your "
                                            "files, so the originals are never overwritten."))
             return
+        if opts["out_mode"] == "overwrite" and self.confirm_overwrite:
+            if not messagebox.askyesno(title, tr("The original files will be replaced by the new versions. "
+                                                 "This cannot be undone.\n\nContinue?"), icon="warning"):
+                return
 
         opts.update(sources=list(self.sources), recursive=self.var_recursive.get())
         self.running = True
@@ -392,9 +519,11 @@ class JobPanel(ttk.Frame):
 
     def _run(self, opts, base, out_dir):
         emit = lambda k, p: self.q.put((k, p))  # noqa: E731
-        out_dir.mkdir(parents=True, exist_ok=True)
-        mark_output_folder(out_dir)
-        files = collect_images(opts["sources"], opts["recursive"], out_dir, self.EXTS)
+        if out_dir:
+            out_dir.mkdir(parents=True, exist_ok=True)
+            mark_output_folder(out_dir)
+        files = collect_images(opts["sources"], opts["recursive"], out_dir, self.EXTS,
+                               self._copy_filter(opts.get("prefix", ""), opts.get("suffix", "")))
         files = self.prepare(files, opts, base)
 
         units = []
@@ -421,8 +550,9 @@ class JobPanel(ttk.Frame):
             if self.cancel.is_set():
                 break
             try:
-                dest_dir = out_dir / rel_dir(base, src)
+                dest_dir = out_dir / rel_dir(base, src) if out_dir else src.parent
                 dest_dir.mkdir(parents=True, exist_ok=True)
+                before = src.stat().st_size  # read first: the original may get overwritten
                 dest, msg = self.process(src, dest_dir, opts, i)
                 line = f"✓ {src.name}"
                 if dest.name != src.name:
@@ -430,7 +560,7 @@ class JobPanel(ttk.Frame):
                 if msg:
                     line += f"   {msg}"
                 if self.SHOW_SIZES:
-                    before, after = src.stat().st_size, dest.stat().st_size
+                    after = dest.stat().st_size
                     saved += before - after
                     line += f"   {kb(before)} → {kb(after)}"
                 emit("log", line)
@@ -445,7 +575,7 @@ class JobPanel(ttk.Frame):
             if not self.cancel.is_set() and done != finished_units:
                 done = finished_units  # modules that don't tick still move the bar
                 emit("progress", done)
-        emit("done", (ok, failed, skipped, saved, out_dir, self.cancel.is_set()))
+        emit("done", (ok, failed, skipped, saved, out_dir or base, self.cancel.is_set(), opts["out_mode"]))
 
     def _poll(self):
         try:
@@ -468,7 +598,7 @@ class JobPanel(ttk.Frame):
                     messagebox.showerror(tr(self.NAME), payload)
                     return
                 elif kind == "done":
-                    ok, failed, skipped, saved, out_dir, stopped = payload
+                    ok, failed, skipped, saved, out_dir, stopped, mode = payload
                     self._finish()
                     if stopped:
                         self.var_status.set(tr("Stopped"))
@@ -481,7 +611,10 @@ class JobPanel(ttk.Frame):
                     if self.SHOW_SIZES and ok:
                         summary += tr(". Saved {mb} MB", mb=dec(saved / 1048576))
                     self._write("\n" + summary + ".")
-                    self._write(tr("Copies are in: {path}", path=out_dir.resolve()))
+                    where = {"folder": "Copies are in: {path}",
+                             "next": "Copies are next to the originals in: {path}",
+                             "overwrite": "Originals were replaced in: {path}"}[mode]
+                    self._write(tr(where, path=out_dir.resolve()))
                     if ok and self.var_open.get() and hasattr(os, "startfile"):
                         os.startfile(out_dir)
                     return

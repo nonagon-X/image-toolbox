@@ -8,14 +8,21 @@ so extra modules can be added without rebuilding.
 """
 
 import importlib.util
+import json
+import os
+import re
 import sys
+import tempfile
+import threading
 import tkinter as tk
 import traceback
+import urllib.request
+import webbrowser
 from pathlib import Path
 from tkinter import messagebox, ttk
 
 APP_NAME = "Toolbox"
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 if getattr(sys, "frozen", False):  # running as Toolbox.exe (PyInstaller)
     BUNDLE_DIR = Path(sys._MEIPASS)
@@ -34,9 +41,41 @@ for d in reversed(MODULE_DIRS):
 import _i18n  # noqa: E402
 from _i18n import LANGS, tr  # noqa: E402
 
+REPO = "nonagon-X/image-toolbox"   # GitHub repository whose Releases hold new versions
+SETUP_ASSET = "ToolboxSetup.exe"   # installer file attached to each release
+
 SIDEBAR_BG = "#1f2933"
 SIDEBAR_FG = "#cbd2d9"
 SIDEBAR_ACTIVE = "#3e4c59"
+
+
+def version_tuple(text):
+    return tuple(int(n) for n in re.findall(r"\d+", text)[:3])
+
+
+def _github(url):
+    return urllib.request.Request(url, headers={"User-Agent": f"{APP_NAME}-updater",
+                                                "Accept": "application/vnd.github+json"})
+
+
+def latest_release():
+    with urllib.request.urlopen(_github(f"https://api.github.com/repos/{REPO}/releases/latest"), timeout=15) as r:
+        return json.load(r)
+
+
+def download(url, dest, pct):
+    """Download url to dest; pct[0] is kept at the percentage done."""
+    part = Path(str(dest) + ".part")
+    with urllib.request.urlopen(_github(url), timeout=30) as r, open(part, "wb") as f:
+        total = int(r.headers.get("Content-Length") or 0)
+        got = 0
+        while chunk := r.read(256 * 1024):
+            f.write(chunk)
+            got += len(chunk)
+            if total:
+                pct[0] = got * 100 // total
+    os.replace(part, dest)
+    return dest
 
 
 def load_modules():
@@ -120,6 +159,11 @@ class ToolboxApp(tk.Tk):
             lbl.pack(side="left", padx=(0, 10))
             lbl.bind("<Button-1>", lambda e, c=code: self.change_language(c))
 
+        self.update_link = tk.Label(self.sidebar, text=tr("Check for updates"), bg=SIDEBAR_BG, fg="#7b8794",
+                                    font=("Segoe UI", 8, "underline"), cursor="hand2", anchor="w", padx=18)
+        self.update_link.pack(side="bottom", fill="x")
+        self.update_link.bind("<Button-1>", lambda e: self.check_updates())
+
         self.content = ttk.Frame(self, padding=24)
         self.content.pack(side="left", fill="both", expand=True)
 
@@ -136,6 +180,81 @@ class ToolboxApp(tk.Tk):
             return
         _i18n.set_language(code)
         self.build_ui()
+
+    # ---- updates (GitHub Releases)
+    def _in_background(self, work, done, tick=None):
+        """Run work() in a thread, then done(result, error) on the Tk thread (tick() runs while waiting)."""
+        box = []
+
+        def run():
+            try:
+                box.append((work(), None))
+            except Exception as e:
+                box.append((None, e))
+
+        def poll():
+            if box:
+                done(*box[0])
+            else:
+                if tick:
+                    tick()
+                self.after(150, poll)
+
+        threading.Thread(target=run, daemon=True).start()
+        poll()
+
+    def _set_update_text(self, text):
+        try:
+            self.update_link.config(text=text)
+        except tk.TclError:  # sidebar was rebuilt (language change)
+            pass
+
+    def check_updates(self):
+        if getattr(self, "_updating", False):
+            return
+        self._updating = True
+        self._set_update_text(tr("Checking for updates…"))
+        self._in_background(latest_release, self._got_release)
+
+    def _got_release(self, rel, error):
+        self._updating = False
+        self._set_update_text(tr("Check for updates"))
+        if error:
+            messagebox.showerror(APP_NAME, tr("Couldn't check for updates:\n{error}", error=error))
+            return
+        latest = rel["tag_name"].lstrip("vV")
+        if version_tuple(latest) <= version_tuple(VERSION):
+            messagebox.showinfo(APP_NAME, tr("You have the latest version ({version}).", version=VERSION))
+            return
+        setup = next((a for a in rel.get("assets", []) if a["name"].lower() == SETUP_ASSET.lower()), None)
+        if not (setup and getattr(sys, "frozen", False)):
+            if messagebox.askyesno(APP_NAME, tr("Toolbox {new} is available (you have {old}).\n\n"
+                                                "Open the download page?", new=latest, old=VERSION)):
+                webbrowser.open(rel["html_url"])
+            return
+        if any(getattr(p, "running", False) for p in self._panels()):
+            messagebox.showinfo(APP_NAME, tr("Toolbox {new} is available. Please wait until the current job "
+                                             "finishes, then check again.", new=latest))
+            return
+        if not messagebox.askyesno(APP_NAME, tr("Toolbox {new} is available (you have {old}).\n\n"
+                                                "Download and install it now? Toolbox will close and "
+                                                "the installer will update it.", new=latest, old=VERSION)):
+            return
+        self._updating = True
+        dest = Path(tempfile.gettempdir()) / f"ToolboxSetup-{latest}.exe"
+        pct = [0]  # written by the download thread, shown by the Tk thread
+        self._in_background(lambda: download(setup["browser_download_url"], dest, pct),
+                            self._run_setup,
+                            tick=lambda: self._set_update_text(tr("Downloading… {pct}%", pct=pct[0])))
+
+    def _run_setup(self, path, error):
+        self._updating = False
+        self._set_update_text(tr("Check for updates"))
+        if error:
+            messagebox.showerror(APP_NAME, tr("The download failed:\n{error}", error=error))
+            return
+        os.startfile(path)
+        self.destroy()
 
     def _panels(self):
         for page in self.pages.values():
@@ -220,6 +339,48 @@ def selftest(report_path):
             return ", ".join(files)
         return go
 
+    def pdf_compress(mode, folder):
+        """Compress PDF writing next to / over the originals; checks names, page count and re-runs."""
+        def go():
+            import shutil as sh
+            import pypdfium2
+            work = tmp / folder
+            work.mkdir()
+            sh.copy2(src / "doc.pdf", work / "doc.pdf")
+            before = (work / "doc.pdf").read_bytes()
+            page = app.pages["Compress PDF"].winfo_children()[2].winfo_children()[0]
+            page.sources = [str(work)]
+            page.var_open.set(False)
+            page.var_keep_smaller.set(False)
+            page.var_outmode.set(mode)
+            page.confirm_overwrite = False
+            for _ in range(2):  # the second run must not compress the copy again
+                page.start()
+                while page.running:
+                    app.update()
+            files = sorted(p.name for p in work.iterdir())
+            want = ["doc.pdf"] if mode == "overwrite" else ["doc.pdf", "doc_small.pdf"]
+            if files != want:
+                raise RuntimeError(f"{files} != {want}\n" + page.log.get("1.0", "end").strip())
+            result = work / want[-1]
+            if mode == "overwrite" and result.read_bytes() == before:
+                raise RuntimeError("original was not replaced")
+            if mode == "next" and (work / "doc.pdf").read_bytes() != before:
+                raise RuntimeError("original was changed")
+            pdf = pypdfium2.PdfDocument(str(result))
+            try:
+                pages = len(pdf)
+            finally:
+                pdf.close()
+            if pages != 2:
+                raise RuntimeError(f"{pages} pages instead of 2")
+            return ", ".join(files)
+        return go
+
+    def pdf_compress_folder(page):
+        page.var_outmode.set("folder")
+        page.var_keep_smaller.set(False)
+
     for lang in ("en", "pl"):
         _i18n.set_language(lang, remember=False)
         check(f"[{lang}] open all module pages", build_pages)
@@ -227,6 +388,9 @@ def selftest(report_path):
         check(f"[{lang}] Convert to AVIF", run_job("Convert Format", f"{lang}_convert",
                                                     lambda p: p.var_format.set("avif")))
         check(f"[{lang}] PDF to Images", run_job("PDF to Images", f"{lang}_pdf"))
+        check(f"[{lang}] Compress PDF to folder", run_job("Compress PDF", f"{lang}_pdfsmall", pdf_compress_folder))
+        check(f"[{lang}] Compress PDF next to originals", pdf_compress("next", f"{lang}_pdfnext"))
+        check(f"[{lang}] Compress PDF overwrite", pdf_compress("overwrite", f"{lang}_pdfover"))
         check(f"[{lang}] sidebar text", lambda: ", ".join(b.cget("text") for b in app.buttons.values()))
         app.destroy()
 
